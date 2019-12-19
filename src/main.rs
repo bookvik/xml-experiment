@@ -7,9 +7,11 @@ use std::env;
 use std::fs::File;
 use std::io::{Cursor, Write};
 use std::str;
+use std::path::{Path, PathBuf};
 
 extern crate percent_encoding;
 extern crate crypto;
+
 
 use self::crypto::digest::Digest;
 use self::crypto::sha1::Sha1;
@@ -22,6 +24,9 @@ use std::fmt;
 #[macro_use]
 extern crate serde;
 extern crate serde_derive;
+
+extern crate glob;
+use glob::glob;
 
 /// https://url.spec.whatwg.org/#fragment-percent-encode-set
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b'/').add(b'?').add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
@@ -92,7 +97,7 @@ struct GenericCategory {
 
 type HSS = HashMap<String, String>;
 
-fn read_xml_from_file<F>(path: String, v: &mut Vec<HSS>, filter: HashMap<&str, bool>, row_filter: F) 
+fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: HashMap<&str, bool>, row_filter: F) 
     where F: Fn(&HSS) -> bool
 {
     match Reader::from_file(path) {
@@ -108,7 +113,7 @@ fn read_xml_from_file<F>(path: String, v: &mut Vec<HSS>, filter: HashMap<&str, b
                 let event = reader.read_event(&mut buf);
 
                 match event {
-                    Ok(Event::Start(ref e)) if e.name() == b"row" => {
+                    Ok(Event::Start(ref e)) if e.name() == base => {
                         in_row = true;
                     }
                   
@@ -127,11 +132,15 @@ fn read_xml_from_file<F>(path: String, v: &mut Vec<HSS>, filter: HashMap<&str, b
                         }
                     }
 
-                    Ok(Event::End(ref e)) if e.name() == b"row" && in_row => {
+                    Ok(Event::End(ref e)) if e.name() == base && in_row => {
                         in_row = false;
 
                         if (row_filter(&hm)) {
                             v.push(hm);
+
+                            if v.len() > 10 {
+                                break;
+                            }
                         }
 
                         hm = HashMap::new();
@@ -168,7 +177,7 @@ impl ExportFile {
             ,false => "yml_id"
         };
 
-        read_xml_from_file(format!("/i4/xmls/lcs/lc_{}.xml", shop.id), &mut v, filter, |hm| {
+        read_xml_from_file(Path::new(&format!("/i4/xmls/lcs/lc_{}.xml", shop.id)), b"row", &mut v, filter, |hm| {
             match hm.get(key) {
                 Some(v) => cats.iter().any(|c| c == v) 
                 ,_ => false
@@ -229,16 +238,50 @@ fn offers<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
     t(b"offers", w, f);
 }
 
-fn process(export_file: &ExportFile, mut w: WCV) {
-    for shop in export_file.shops() {
-        for cat in export_file.cats(shop) {
-        }
-    }
+fn process(export_file: &ExportFile, mut w: WCV) -> Result<(), Box<dyn std::error::Error>> {
+
+    let cats: Vec<GenericCategory> = export_file
+        .shops()
+        .iter()
+        .map( |shop| export_file.cats(shop) )
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let feeds: Vec<PathBuf> = export_file
+        .shops().iter()
+        .map( |shop| glob(&format!("/i4/slon-i4-downloader/xmls/{}/*.xml", shop.id)) )
+        .filter(Result::is_ok)
+        .flat_map(Result::unwrap)
+        .filter(Result::is_ok)
+        .map(Result::unwrap)
+        .collect();
+
+    let mut v: Vec<HashMap<String, String>> = Vec::new();
+
+    feeds.iter().for_each( |pb| {
+        read_xml_from_file(pb.as_path(), b"category", &mut v, HashMap::new(), |hm| {
+            println!("{:#?}", hm);
+            return true;
+        });
+    });
+    
+    let mut v: Vec<HashMap<String, String>> = Vec::new();
+
+    feeds.iter().for_each( |pb| {
+        read_xml_from_file(pb.as_path(), b"offer", &mut v, HashMap::new(), |hm| {
+            println!("{:#?}", hm);
+            return true;
+        });
+    });
+
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut map = HashMap::new();
-    map.insert("query", "{ allExportFiles(perPage: 1, page: 0)  { id, filename, isThrough, partnerTrackCode, minPrice, maxPrice, state, shop { id }, format, legacyCategories { ymlId, categoryId }, parkedDomain { id, name }, categories { id }, user { apiToken }, merchants { id }}}");
+
+    map.insert("query", "{ allExportFiles(filter: { filename: \"dc5f952d28ef97e02f553e7f1b0b5cbe281eac2c\"  }, perPage: 1, page: 0)  { id, filename, isThrough, partnerTrackCode, minPrice, maxPrice, state, shop { id }, format, legacyCategories { ymlId, categoryId }, parkedDomain { id, name }, categories { id }, user { apiToken }, merchants { id }}}");
 
     let client = reqwest::blocking::Client::new();
 
@@ -254,7 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     process(
         &rsp.data.allExportFiles[0],
         Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2)
-    );
+    )?;
 
     return Ok(());
 }
