@@ -107,7 +107,7 @@ fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: Has
    
             let mut name = Vec::new();
             let mut in_row = false;
-            let mut hm = HashMap::new();
+            let mut hm = HSS::new();
 
             loop {
                 let event = reader.read_event(&mut buf);
@@ -117,7 +117,7 @@ fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: Has
                         in_row = true;
                     }
                   
-                    Ok(Event::Start(ref e)) if in_row => {
+                    ,Ok(Event::Start(ref e)) if in_row => {
                         name = e.name().to_vec();
                     }
 
@@ -132,7 +132,7 @@ fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: Has
                         }
                     }
 
-                    Ok(Event::End(ref e)) if e.name() == base && in_row => {
+                    ,Ok(Event::End(ref e)) if e.name() == base && in_row => {
                         in_row = false;
 
                         if (row_filter(&hm)) {
@@ -143,7 +143,7 @@ fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: Has
                             }
                         }
 
-                        hm = HashMap::new();
+                        hm = HSS::new();
                     }
 
                     ,Ok(Event::Eof) => break
@@ -160,7 +160,7 @@ fn read_xml_from_file<F>(path: &Path, base: &[u8], v: &mut Vec<HSS>, filter: Has
 
 impl ExportFile {
     fn cats(&self, shop: &Shop) -> Vec<GenericCategory> {
-        let mut v: Vec<HashMap<String,String>> = Vec::new();
+        let mut v: Vec<HSS> = Vec::new();
 
         let mut filter = HashMap::new();
 
@@ -226,12 +226,30 @@ fn categories<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
     t(b"categories", w, f);
 }
 
-fn category<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+fn category<F: FnOnce(&mut WCV)>(f: F, feeds: Vec<PathBuf>, cats: Vec<GenericCategory>, w: &mut WCV) {
+    let mut v: Vec<HSS> = Vec::new();
+
+    feeds.iter().for_each( |pb| {
+        read_xml_from_file(pb.as_path(), b"category", &mut v, HashMap::new(), |hm| {
+            println!("{:#?}", hm);
+            return true;
+        });
+    });
+
     t(b"category", w, f);
 }
 
-fn offer<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
-    t(b"offer", w, f);
+fn offer<F: FnOnce(&mut WCV)>(f: F, feeds: Vec<PathBuf>, cats: Vec<GenericCategory>, w: &mut WCV) {
+    let mut v: Vec<HSS> = Vec::new();
+
+    feeds.iter().for_each( |pb| {
+        read_xml_from_file(pb.as_path(), b"offer", &mut v, HashMap::new(), |hm| {
+            println!("{:#?}", hm);
+            return true;
+        });
+    });
+
+    t(b"category", w, f);
 }
 
 fn offers<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
@@ -239,7 +257,6 @@ fn offers<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
 }
 
 fn process(export_file: &ExportFile, mut w: WCV) -> Result<(), Box<dyn std::error::Error>> {
-
     let cats: Vec<GenericCategory> = export_file
         .shops()
         .iter()
@@ -257,23 +274,19 @@ fn process(export_file: &ExportFile, mut w: WCV) -> Result<(), Box<dyn std::erro
         .map(Result::unwrap)
         .collect();
 
-    let mut v: Vec<HashMap<String, String>> = Vec::new();
+    yml_catalog(|w| {
+        categories(|w| {
+            category(|w| {
+            }, feeds, cats, w)
+        }, w);
+        
+        offers(|w| {
+            offer(|w| {
+            }, feeds, cats, w)
+        }, w);
+    }, &mut w);
 
-    feeds.iter().for_each( |pb| {
-        read_xml_from_file(pb.as_path(), b"category", &mut v, HashMap::new(), |hm| {
-            println!("{:#?}", hm);
-            return true;
-        });
-    });
-    
-    let mut v: Vec<HashMap<String, String>> = Vec::new();
-
-    feeds.iter().for_each( |pb| {
-        read_xml_from_file(pb.as_path(), b"offer", &mut v, HashMap::new(), |hm| {
-            println!("{:#?}", hm);
-            return true;
-        });
-    });
+    println!("{}", str::from_utf8(w.into_inner().into_inner().as_ref()).unwrap());
 
     Ok(())
 }
