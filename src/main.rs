@@ -5,7 +5,7 @@ use std::io::BufReader;
 
 use std::env;
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::str;
 
 extern crate percent_encoding;
@@ -18,6 +18,10 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use std::str::Utf8Error;
 
 use std::fmt;
+
+#[macro_use]
+extern crate serde;
+extern crate serde_derive;
 
 /// https://url.spec.whatwg.org/#fragment-percent-encode-set
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b'/').add(b'?').add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
@@ -49,33 +53,216 @@ pub fn main() {
 
 */
 
-/*
-
 /// get export file 
 
 use std::collections::HashMap;
 
+#[derive(Deserialize)]
+struct Shop {
+    id: String
+}
+
+#[derive(Deserialize)]
+struct LegacyCategory {
+    ymlId: String
+    ,categoryId: Option<i32>
+}
+
+#[derive(Deserialize)]
+struct Category {
+    id: String
+}
+
+#[derive(Deserialize)]
+struct ExportFile {
+    id: String
+    ,filename: String
+    ,isThrough: bool
+    ,minPrice: Option<i32>
+    ,maxPrice: Option<i32>
+    ,shop: Option<Shop>
+    ,legacyCategories: Vec<LegacyCategory>
+    ,categories: Vec<Category>
+    ,merchants: Vec<Shop>
+}
+
+struct GenericCategory {
+    id: String
+}
+
+type HSS = HashMap<String, String>;
+
+fn read_xml_from_file<F>(path: String, v: &mut Vec<HSS>, filter: HashMap<&str, bool>, row_filter: F) 
+    where F: Fn(&HSS) -> bool
+{
+    match Reader::from_file(path) {
+        Ok(mut reader) => {
+            let mut buf = Vec::new();
+            reader.trim_text(true);
+   
+            let mut name = Vec::new();
+            let mut in_row = false;
+            let mut hm = HashMap::new();
+
+            loop {
+                let event = reader.read_event(&mut buf);
+
+                match event {
+                    Ok(Event::Start(ref e)) if e.name() == b"row" => {
+                        in_row = true;
+                    }
+                  
+                    Ok(Event::Start(ref e)) if in_row => {
+                        name = e.name().to_vec();
+                    }
+
+                    ,Ok(Event::Text(ref e)) if in_row => {
+                        let name = str::from_utf8(name.as_slice()).unwrap().to_string();
+
+                        if filter.is_empty() || filter.contains_key(name.as_str()) {
+                            hm.insert(
+                                name,
+                                e.unescape_and_decode(&reader).unwrap().to_string()
+                            );
+                        }
+                    }
+
+                    Ok(Event::End(ref e)) if e.name() == b"row" && in_row => {
+                        in_row = false;
+
+                        if (row_filter(&hm)) {
+                            v.push(hm);
+                        }
+
+                        hm = HashMap::new();
+                    }
+
+                    ,Ok(Event::Eof) => break
+                    ,Err(_) => println!("can not parse event on lc file")
+                    ,Ok(_) => ()
+                }
+            }
+        }
+
+        ,Err(_) => println!("can not open lc file")
+        ,Ok(_) => ()
+    }
+}
+
+impl ExportFile {
+    fn cats(&self, shop: &Shop) -> Vec<GenericCategory> {
+        let mut v: Vec<HashMap<String,String>> = Vec::new();
+
+        let mut filter = HashMap::new();
+
+        filter.insert("category_id", true); 
+        filter.insert("yml_id", true); 
+
+        let cats: Vec<&str> = match self.isThrough {
+            true => self.categories.iter().map(|c| c.id.as_str()).collect()
+            ,false => self.legacyCategories.iter().map(|c| c.ymlId.as_str()).collect()
+        };
+
+        let key = match self.isThrough {
+            true => "category_id"
+            ,false => "yml_id"
+        };
+
+        read_xml_from_file(format!("/i4/xmls/lcs/lc_{}.xml", shop.id), &mut v, filter, |hm| {
+            match hm.get(key) {
+                Some(v) => cats.iter().any(|c| c == v) 
+                ,_ => false
+            }
+        });
+
+        return v.iter().map(|hm| GenericCategory { id: hm.get("yml_id").unwrap().to_string() }).collect();
+    }
+
+    fn shops(&self) -> Vec<&Shop> {
+        if self.isThrough {
+            return self.merchants.iter().map(|s| s).collect();
+        } else {
+            return vec![self.shop.as_ref().unwrap()];
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AllExportFiles {
+    allExportFiles: Vec<ExportFile>
+}
+
+#[derive(Deserialize)]
+struct AllExportFilesResponse {
+    data: AllExportFiles
+}
+
+fn t<F: FnOnce(&mut WCV)>(name: &[u8], w: &mut WCV, f: F) {
+    w.write_event(Event::Start(BytesStart::owned(name.to_vec(), name.len())));
+    f(w);
+    w.write_event(Event::End(BytesEnd::borrowed(name)));
+}
+
+type WCV =  Writer<Cursor<Vec<u8>>>;
+
+fn yml_catalog<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"yml_catalog", w, f);
+}
+
+fn shop<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"shop", w, f);
+}
+
+fn categories<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"categories", w, f);
+}
+
+fn category<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"category", w, f);
+}
+
+fn offer<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"offer", w, f);
+}
+
+fn offers<F: FnOnce(&mut WCV)>(f: F, w: &mut WCV) {
+    t(b"offers", w, f);
+}
+
+fn process(export_file: &ExportFile, mut w: WCV) {
+    for shop in export_file.shops() {
+        for cat in export_file.cats(shop) {
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut map = HashMap::new();
+    map.insert("query", "{ allExportFiles(perPage: 1, page: 0)  { id, filename, isThrough, partnerTrackCode, minPrice, maxPrice, state, shop { id }, format, legacyCategories { ymlId, categoryId }, parkedDomain { id, name }, categories { id }, user { apiToken }, merchants { id }}}");
 
     let client = reqwest::blocking::Client::new();
 
-    let res = client.post("http://httpbin.org/post")
-    .body("the exact body that is sent")
-    .send()?;
+    let res = client
+        .post("https://federation.gdeslon.ru/graphql")
+        .bearer_auth("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiItMSJ9.naTEm5Y4Y6nGLc4t5EoLuwJPZOoXMRdw_uH0lXwGr2o")
+        .json(&map)
+        .send()?;
 
-    println!("{:#?}", res);
-    Ok(())
+
+    let rsp: AllExportFilesResponse = res.json()?;
+
+    process(
+        &rsp.data.allExportFiles[0],
+        Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2)
+    );
+
+    return Ok(());
 }
 
-*/
+/*
 
-//use json;
-//use json::value::JsonValue;
 
 fn main() {
-    //let json = get_export_file(json::parse(&std::fs::read_to_string("./gq.json").unwrap()).unwrap());
-    
-    let args: Vec<String> = env::args().collect();
     let mid = "42071";
 
     let mut reader = Reader::from_file(&args[1]).unwrap();
@@ -296,4 +483,6 @@ fn main() {
     let elapsed = now.elapsed().as_nanos();
     println!("Elapsed {} ns", elapsed);
 }
+
+*/
 

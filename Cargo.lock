@@ -1602,6 +1602,7 @@ dependencies = [
  "native-tls",
  "percent-encoding 2.1.0",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "time",
  "tokio",
@@ -2565,4 +2566,6 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "rust-crypto",
+ "serde",
+ "serde_derive",
 ]

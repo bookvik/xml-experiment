@@ -8,6 +8,8 @@ edition = "2018"
 quick-xml = "*"
 percent-encoding = "*"
 actix-web = "1.0"
-reqwest = { version = "0.10.0-alpha.2", features = ["blocking"] }
+reqwest = { version = "0.10.0-alpha.2", features = ["blocking", "json"] }
 rust-crypto = "^0.2"
 json = "*"
+serde = "*"
+serde_derive = "*"
