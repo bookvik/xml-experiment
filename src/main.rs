@@ -1,5 +1,4 @@
-use std::io::{Cursor};
-use std::io::BufReader;
+use std::io::{Cursor, BufReader};
 use std::fs::File;
 
 use quick_xml::{Reader, Writer};
@@ -11,10 +10,10 @@ struct XMLAttr {
 }
 
 impl XMLAttr {
-  fn new(k: &str, v: &str) -> XMLAttr {
-    XMLAttr {
-      key: k.to_string(),
-      value: v.to_string()
+  fn new(k: &str, v: &str) -> Self {
+    Self {
+      key: s(k)
+      ,value: s(v)
     }
   }
 }
@@ -27,11 +26,11 @@ struct XMLNode {
 }
 
 impl XMLNode {
-  fn new(name: &str) -> XMLNode {
-    XMLNode {
-      name: name.to_string()
+  fn new(name: &str) -> Self {
+    Self {
+      name: s(name)
       ,attrs: vec![]
-      ,value: "".to_string()
+      ,value: s("")
       ,nodes: vec![]
     }
   }
@@ -44,8 +43,8 @@ struct XMLWriter {
 }
 
 impl XMLWriter {
-  fn new(w: WCVU8) -> XMLWriter {
-    XMLWriter {
+  fn new(w: WCVU8) -> Self{
+    Self {
       writer: w
     }
   }
@@ -83,11 +82,10 @@ struct XMLReader {
   ,tag: String
   ,name: String
   ,buf: Vec<u8>
-  ,filter: Vec<String>
 }
 
 impl XMLReader {
-  fn from_file(f: &str, tag: &str, name: &str, filter: Vec<String>) -> Self {
+  fn from_file(f: &str, tag: &str, name: &str) -> Self {
     let mut reader = Reader::from_file(f).unwrap();
     reader.trim_text(true);
 
@@ -98,13 +96,20 @@ impl XMLReader {
       ,tag: s(tag)
       ,name: s(name)
       ,buf
-      ,filter
     }
+  }
+
+  fn fltr(xnode: &mut XMLNode) -> bool {
+      match xnode.name.as_str() {
+        "yml_id" | "category_id" => true
+        ,_ => false
+      }
   }
 }
 
 impl Iterator for XMLReader {
   type Item = XMLNode;
+
 
   fn next(&mut self) -> Option<Self::Item> {
     let mut xnodes: Vec<XMLNode> = vec![];
@@ -115,8 +120,8 @@ impl Iterator for XMLReader {
 
         match event {
           Ok(Event::Start(ref e)) if e.name() == self.tag.as_bytes() => {
-            let mut lcl_root = XMLNode::new(&self.name);
-            xnodes.push(lcl_root);
+            let mut xnode = XMLNode::new(&self.name);
+            xnodes.push(xnode);
           }
           
           ,Ok(Event::Start(ref e)) if !xnodes.is_empty() =>  {
@@ -141,7 +146,13 @@ impl Iterator for XMLReader {
               return popped;
             } else {
                 match xnodes.last_mut() {
-                    Some(v) => v.nodes.push(popped.unwrap()),
+                    Some(v) => {
+                        let mut pun = popped.unwrap();
+
+                        if XMLReader::fltr(&mut pun) {
+                            v.nodes.push(pun)
+                        }
+                    }
                     _ => panic!("wrong branch")
                 }
             }
@@ -155,6 +166,28 @@ impl Iterator for XMLReader {
   }
 }
 
+struct Shop {
+	id: String
+}
+
+struct Category {
+    id: String
+}
+
+struct LegacyCategory {
+    categoryId: Option<i32>
+    ,ymlId: String
+}
+
+struct ExportFile {
+	filename: String
+	,isThrough: bool
+	,shop: Option<Shop>
+	,merhants: Vec<Shop>
+    ,categories: Vec<Category>
+    ,legacyCategories: Vec<LegacyCategory>
+}
+
 /// helper
 
 fn s(s: &str) -> String {
@@ -162,6 +195,26 @@ fn s(s: &str) -> String {
 }
 
 fn main() {
+  let ef  = ExportFile {
+    filename: s("28e98107ae3b1d68622fcd4a76e12ace307eb09c")
+    ,isThrough: true
+    ,merhants: vec![Shop { id: s("1") }]
+    ,shop: Some(Shop { id: s("1") })
+    ,categories: vec![Category { id: s("1") }]
+    ,legacyCategories: vec![LegacyCategory { categoryId: Some(1), ymlId: s("123") }]
+  };
+
+  if ef.isThrough {
+        let cat_ids: Vec<&str> = ef.categories.iter().map(|c| c.id.as_str()).collect();
+
+		for shop in ef.merhants {
+            let mut xreader = XMLReader::from_file("/i4/xmls/lcs/lc_42071.xml", "row", "category");
+		}
+
+  } else {
+      let yml_ids: Vec<&str> = ef.legacyCategories.iter().map(|c| c.ymlId.as_str()).collect();
+  }
+
   let mut w = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
   let mut xwriter = XMLWriter::new(w);
 
@@ -171,7 +224,7 @@ fn main() {
   let mut categories = XMLNode::new("categories");
   let mut offers = XMLNode::new("offers");
 
-  let mut xreader = XMLReader::from_file("/i4/xmls/lcs/lc_42071.xml", "row", "category", vec![s("category_id"), s("yml_id")]);
+  let mut xreader = XMLReader::from_file("/i4/xmls/lcs/lc_42071.xml", "row", "category");
   
   for node in xreader {
     categories.nodes.push(node);
