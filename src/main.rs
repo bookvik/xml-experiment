@@ -1,241 +1,373 @@
+use quick_xml::events::{Event, BytesStart, BytesEnd, BytesText};
+use quick_xml::events::attributes::{Attribute};
+use quick_xml::{Reader, Writer};
+use std::ffi::OsStr;
 use std::io::{Cursor, BufReader};
+use zip::ZipWriter;
 use std::fs::File;
 
-use quick_xml::{Reader, Writer};
-use quick_xml::events::{Event, BytesStart, BytesEnd, BytesText};
+extern crate crypto;
+use self::crypto::digest::Digest;
+use self::crypto::sha1::Sha1;
 
-struct XMLAttr {
-  key: String
-  ,value: String
-}
+extern crate percent_encoding;
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use std::str::Utf8Error;
 
-impl XMLAttr {
-  fn new(k: &str, v: &str) -> Self {
-    Self {
-      key: s(k)
-      ,value: s(v)
-    }
-  }
-}
+extern crate glob;
+use glob::glob;
 
-struct XMLNode {
-  name: String
-  ,attrs: Vec<XMLAttr>
-  ,value: String
-  ,nodes: Vec<XMLNode>
-}
-
-impl XMLNode {
-  fn new(name: &str) -> Self {
-    Self {
-      name: s(name)
-      ,attrs: vec![]
-      ,value: s("")
-      ,nodes: vec![]
-    }
-  }
-}
-
-type WCVU8 = Writer<Cursor<Vec<u8>>>;
-
-struct XMLWriter {
-  writer: WCVU8
-}
-
-impl XMLWriter {
-  fn new(w: WCVU8) -> Self{
-    Self {
-      writer: w
-    }
-  }
-
-  fn into_inner(self) -> WCVU8 {
-    self.writer
-  }
-
-  fn write(&mut self, x: &XMLNode) {
-    let xname = x.name.as_bytes();
-
-    let mut elem = BytesStart::owned(xname.to_vec(), xname.len());
-
-    if !x.attrs.is_empty() {
-      x.attrs.iter().for_each( |attr| {
-        elem.push_attribute((attr.key.as_str(), attr.value.as_str()));
-      });
-    }
-
-    self.writer.write_event(Event::Start(elem));
-
-    if !x.nodes.is_empty() {
-      x.nodes.iter().for_each( |xnode| self.write(xnode) );
-    } else if !x.value.is_empty() {
-      self.writer.write_event(Event::CData(BytesText::from_plain_str(&x.value))).unwrap();
-    }
-
-    self.writer.write_event(Event::End(BytesEnd::borrowed(xname)));
-  }
-}
-
-
-struct XMLReader {
-  reader: Reader<BufReader<File>>
-  ,tag: String
-  ,name: String
-  ,buf: Vec<u8>
-}
-
-impl XMLReader {
-  fn from_file(f: &str, tag: &str, name: &str) -> Self {
-    let mut reader = Reader::from_file(f).unwrap();
-    reader.trim_text(true);
-
-    let mut buf = Vec::new();
-
-    Self {
-      reader
-      ,tag: s(tag)
-      ,name: s(name)
-      ,buf
-    }
-  }
-
-  fn fltr(xnode: &mut XMLNode) -> bool {
-      match xnode.name.as_str() {
-        "yml_id" | "category_id" => true
-        ,_ => false
-      }
-  }
-}
-
-impl Iterator for XMLReader {
-  type Item = XMLNode;
-
-
-  fn next(&mut self) -> Option<Self::Item> {
-    let mut xnodes: Vec<XMLNode> = vec![];
-
-    loop {
-        self.buf.clear();
-        let event = self.reader.read_event(&mut self.buf);
-
-        match event {
-          Ok(Event::Start(ref e)) if e.name() == self.tag.as_bytes() => {
-            let mut xnode = XMLNode::new(&self.name);
-            xnodes.push(xnode);
-          }
-          
-          ,Ok(Event::Start(ref e)) if !xnodes.is_empty() =>  {
-            let name = std::str::from_utf8(e.name()).unwrap();
-            let mut xnode = XMLNode::new(name);
-            xnodes.push(xnode) 
-          }
-          
-          ,Ok(Event::Text(ref e)) if !xnodes.is_empty() =>  {
-            let value = e.unescape_and_decode(&self.reader).unwrap().to_string();
-
-            match xnodes.last_mut() {
-              Some(v) => v.value = value 
-              ,_ => () 
-            }
-          }
-
-          ,Ok(Event::End(ref e)) =>  {
-            let popped = xnodes.pop();
-
-            if xnodes.is_empty() {
-              return popped;
-            } else {
-                match xnodes.last_mut() {
-                    Some(v) => {
-                        let mut pun = popped.unwrap();
-
-                        if XMLReader::fltr(&mut pun) {
-                            v.nodes.push(pun)
-                        }
-                    }
-                    _ => panic!("wrong branch")
-                }
-            }
-          }
-
-          ,Ok(Event::Eof) => return None
-
-          ,_ => ()
-        }
-    }
-  }
-}
-
-struct Shop {
-	id: String
-}
-
-struct Category {
-    id: String
-}
-
-struct LegacyCategory {
-    categoryId: Option<i32>
-    ,ymlId: String
-}
-
-struct ExportFile {
-	filename: String
-	,isThrough: bool
-	,shop: Option<Shop>
-	,merhants: Vec<Shop>
-    ,categories: Vec<Category>
-    ,legacyCategories: Vec<LegacyCategory>
-}
-
-/// helper
+/// https://url.spec.whatwg.org/#fragment-percent-encode-set
+const FRAGMENT: &AsciiSet = &CONTROLS.add(b'/').add(b'?').add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
 
 fn s(s: &str) -> String {
     s.to_string()
 }
 
-fn main() {
-  let ef  = ExportFile {
-    filename: s("28e98107ae3b1d68622fcd4a76e12ace307eb09c")
-    ,isThrough: true
-    ,merhants: vec![Shop { id: s("1") }]
-    ,shop: Some(Shop { id: s("1") })
-    ,categories: vec![Category { id: s("1") }]
-    ,legacyCategories: vec![LegacyCategory { categoryId: Some(1), ymlId: s("123") }]
-  };
+fn us(s: &[u8]) -> &str {
+    std::str::from_utf8(&s).unwrap_or("")
+}
 
-  if ef.isThrough {
-        let cat_ids: Vec<&str> = ef.categories.iter().map(|c| c.id.as_str()).collect();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let yml_ids = vec!["740", "745"];
 
-		for shop in ef.merhants {
-            let mut xreader = XMLReader::from_file("/i4/xmls/lcs/lc_42071.xml", "row", "category");
-		}
+    let min_price = None; //Some(1000.0);
+    let max_price = None; //Some(2000.0);
 
-  } else {
-      let yml_ids: Vec<&str> = ef.legacyCategories.iter().map(|c| c.ymlId.as_str()).collect();
-  }
+    let mids = vec!["80549"];
+    let api_token = "8ee42be72a";
 
-  let mut w = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
-  let mut xwriter = XMLWriter::new(w);
+    let parked_domain = None;
+    let partner_track_code = None;
 
-  let mut yml_catalog = XMLNode::new("yml_catalog");
-  let mut shop = XMLNode::new("shop");
+    let filename = "dc5f952d28ef97e02f553e7f1b0b5cbe281eac2c.xml.zip";
 
-  let mut categories = XMLNode::new("categories");
-  let mut offers = XMLNode::new("offers");
+    let write = File::create(filename)?;
+    let mut zip = ZipWriter::new(write);
 
-  let mut xreader = XMLReader::from_file("/i4/xmls/lcs/lc_42071.xml", "row", "category");
-  
-  for node in xreader {
-    categories.nodes.push(node);
-    break;
-  }
+    let options = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("0.xml", options)?;
+    let mut writer = Writer::new_with_indent(zip, b' ', 2);
+    
+    let tag  = b"yml_catalog";
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+    
+    let tag  = b"shop";
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
 
-  shop.nodes.push(categories);
-  shop.nodes.push(offers);
-  yml_catalog.nodes.push(shop);
+    // {{{ categories
+    for mid in &mids {
 
-  xwriter.write(&yml_catalog);
+    let tag  = b"categories";
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
 
-  println!("{}", std::str::from_utf8(xwriter.into_inner().into_inner().into_inner().as_ref()).unwrap().to_string());
+    let paths = glob(&format!("/i4/slon-i4-downloader/xmls/{}/*.xml", mid))?;
+    for path in paths {
+        let mut reader = Reader::from_file(path?)?;
+        reader.trim_text(true);
+        
+        let mut buf = Vec::new();
+
+        let mut in_category = false;
+        let mut category_text = String::new();
+
+        let mut offer: Option<BytesStart> = None;
+
+        loop {
+            let event = reader.read_event(&mut buf)?;
+
+            match event {
+
+                // category
+
+                Event::Start(ref e) if !in_category && e.name() == b"category" => {
+                    for attr in e.attributes() {
+                        let a = attr?;
+
+                        if a.key == b"id" {
+                            in_category = yml_ids.iter().any(|yid| yid == &us(a.value.as_ref()));
+                            break;
+                        }
+                    }
+
+                    if in_category {
+                        writer.write_event(event)?;
+                    }
+                }
+                
+                ,Event::Text(ref e) if in_category => {
+                    writer.write_event(event)?;
+                }
+
+                ,Event::End(ref e) if in_category && e.name() == b"category" => {
+                    in_category = false;
+                    writer.write_event(event)?;
+                }
+                
+                ,Event::Eof => break
+            
+                ,_ => ()
+            }
+        }
+    }
+
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+    }
+
+    // }}}
+    
+    // {{{ offers
+
+    for mid in &mids {
+
+   
+    let tag  = b"offers";
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+
+    let paths = glob(&format!("/i4/slon-i4-downloader/xmls/{}/*.xml", mid))?;
+
+    for path in paths {
+        let mut reader = Reader::from_file(path?)?;
+        reader.trim_text(true);
+        
+        let mut buf = Vec::new();
+
+        let mut in_offer = false;
+        let mut in_url = false;
+        let mut in_picture = false;
+        let mut in_price = false;
+        let mut in_categoryId = false;
+
+        let mut url_text = String::new();
+        let mut picture_text = String::new();
+        let mut price_text = String::new();
+        let mut categoryId_text = String::new();
+        let mut article_text = String::new();
+
+        let mut offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+
+        loop {
+            let event = reader.read_event(&mut buf)?;
+
+            match event {
+                // offer
+                
+                Event::Start(ref e) if !in_offer && e.name() == b"offer" => {
+                    in_offer = true;
+
+                    let mut elem = e.clone();
+
+                    elem.clear_attributes();
+
+                    // article
+
+                    let mut article = e.attributes().filter( |attr| attr.as_ref().unwrap().key == b"id" ).next().unwrap().unwrap().value;
+
+                    article_text = s(us(article.as_ref()));
+                    elem.push_attribute(("article".as_bytes(), article.as_ref()));
+
+                    // id
+                    
+                    let mut hasher = Sha1::new();
+                    hasher.input_str(&format!("{}|{}", mid, us(article.as_ref())));
+                    elem.push_attribute(("id", u64::from_str_radix(&hasher.result_str()[0..16], 16)?.to_string().as_str()));
+
+                    // another
+
+                    elem.extend_attributes(e.attributes().filter(|attr| attr.as_ref().unwrap().key != b"id" ).map(|attr| attr.unwrap()));
+
+                    elem.push_attribute(("merchant_id", mid.to_string().as_ref()));
+                    elem.push_attribute(("gs_category_id", "1"));
+                    elem.push_attribute(("gs_product_key", "1"));
+
+                    offer_writer.write_event(Event::Start(elem))?;
+                }
+
+                ,Event::End(ref e) if in_offer && e.name() == b"offer" => {
+                    in_offer = false;
+
+                    offer_writer.write_event(event)?;
+                    writer.write(offer_writer.into_inner().into_inner().as_ref());
+
+                    offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+                }
+                
+                // offer categoryId
+                
+                ,Event::Start(ref e) if in_offer && e.name() == b"categoryId" => {
+                    in_categoryId = true;
+                    offer_writer.write_event(event)?;
+                }
+
+                ,Event::Text(ref e) if in_offer && in_categoryId => {
+                    categoryId_text = e.unescape_and_decode(&reader)?;
+                    offer_writer.write_event(event)?;
+                }
+                
+                ,Event::End(ref e) if in_offer && in_categoryId && e.name() == b"categoryId" => {
+                    in_categoryId = false;
+                    in_offer = yml_ids.iter().any(|yid| yid == &categoryId_text );
+
+                    if in_offer {
+                        offer_writer.write_event(event)?;
+                    } else {
+                        offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+                    }
+                }
+
+                // offer price
+                
+                ,Event::Start(ref e) if in_offer && e.name() == b"price" => {
+                    in_price = true;
+                    offer_writer.write_event(event)?;
+                }
+
+                ,Event::Text(ref e) if in_offer && in_price => {
+                    price_text = e.unescape_and_decode(&reader)?;
+                    offer_writer.write_event(event)?;
+                }
+                
+                ,Event::End(ref e) if in_offer && in_price && e.name() == b"price" => {
+                    in_price = false;
+
+                    let price_text: f32 = price_text.parse()?;
+
+                    if min_price.is_some() {
+                        in_offer = price_text >= min_price.unwrap();
+                    } 
+
+                    if in_offer && max_price.is_some() {
+                        in_offer = price_text <= max_price.unwrap();
+                    }
+
+                    if in_offer {
+                        offer_writer.write_event(event)?;
+                    } else {
+                        offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+                    }
+                }
+                
+                // offer url 
+
+                ,Event::Start(ref e) if in_offer && e.name() == b"url" => {
+                    in_url = true;
+                }
+
+                ,Event::Text(ref e) if in_offer && in_url => {
+                    url_text = e.unescape_and_decode(&reader)?.to_string();
+                }
+                
+                ,Event::End(ref e) if in_offer && in_url && e.name() == b"url" => {
+                    let tag = b"url";
+
+                    let mut sid  = String::new();
+
+                    if partner_track_code.is_some() {
+                        sid = format!("&sub_id={}", partner_track_code.unwrap_or(""));
+                    } else {
+                        sid = s("");
+                    }
+
+                    let deep_link = format!("{}/cf/{}?mid={}&goto={}{}", 
+                                            parked_domain.unwrap_or("https://f.gdeslon.ru"), 
+                                            api_token, 
+                                            mid, 
+                                            utf8_percent_encode(&url_text, FRAGMENT).to_string(),
+                                            sid
+                                           );
+
+                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    offer_writer.write_event(Event::CData(BytesText::from_plain_str(&deep_link)))?;
+                    offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+                    let tag = b"destination-url-do-not-send-traffic";
+
+                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    offer_writer.write_event(Event::CData(BytesText::from_plain_str(&url_text)))?;
+                    offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+                    in_url = false;
+                }
+                
+                // offer picture
+                
+                ,Event::Start(ref e) if in_offer && e.name() == b"picture" => {
+                    in_picture = true;
+                }
+
+                ,Event::Text(ref e) if in_offer && in_picture => {
+                    picture_text = e.unescape_and_decode(&reader)?.to_string();
+                }
+                
+                ,Event::End(ref e) if in_offer && in_picture && e.name() == b"picture" => {
+                    in_picture = false;
+
+                    let tag = b"picture";
+                    let im_no = "0";
+
+                    let mut hasher = Sha1::new();
+                    hasher.input_str(&picture_text);
+
+                    let small_hash = hasher.result_str();
+
+                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "big"))))?;
+                    offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+                    let tag = b"thumbnail";
+                    let small_hash = hasher.result_str();
+
+                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "small"))))?;
+                    offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                    
+                    let tag = b"original_picture";
+
+                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    offer_writer.write_event(Event::CData(BytesText::from_plain_str(&picture_text)))?;
+                    offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                }
+
+                ,Event::Eof => break
+            
+                ,Event::Start(_) if in_offer => {
+                    offer_writer.write_event(event)?;
+                }
+                
+                ,Event::Text(ref e) if in_offer => {
+                    offer_writer.write_event(Event::CData(e.clone()))?;
+                }
+                
+                ,Event::End(_) if in_offer => {
+                    offer_writer.write_event(event)?;
+                }
+
+                ,_ if in_offer => {
+                    offer_writer.write_event(event)?;
+                }
+
+                ,_ => ()
+            }
+
+            buf.clear();
+        }
+    }
+
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+    }
+   
+
+    // }}}
+
+    let tag = b"shop";
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+    
+    let tag = b"yml_catalog";
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+    //println!("{}", s(us(writer.into_inner().into_inner().as_ref())));
+    
+    Ok(())
 }
