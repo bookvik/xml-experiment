@@ -147,6 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
 
+        let mut img_no = 1;
+
         loop {
             let event = reader.read_event(&mut buf)?;
 
@@ -311,22 +313,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let small_hash = hasher.result_str();
 
-                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
+                    pic.push_attribute(("id", img_no.to_string().as_str()));
+
+                    offer_writer.write_event(Event::Start(pic));
                     offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "big"))))?;
                     offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
 
                     let tag = b"thumbnail";
                     let small_hash = hasher.result_str();
 
-                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
+                    pic.push_attribute(("id", img_no.to_string().as_str()));
+
+                    offer_writer.write_event(Event::Start(pic));
                     offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "small"))))?;
                     offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
                     
                     let tag = b"original_picture";
 
-                    offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                    let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
+                    pic.push_attribute(("id", img_no.to_string().as_str()));
+
+                    offer_writer.write_event(Event::Start(pic));
                     offer_writer.write_event(Event::CData(BytesText::from_plain_str(&picture_text)))?;
                     offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+
+                    img_no += 1;
                 }
 
                 ,Event::Eof => break
