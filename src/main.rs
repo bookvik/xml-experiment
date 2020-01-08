@@ -1,11 +1,9 @@
-use std::ffi::OsStr;
-use std::io::{Cursor, BufReader};
+use std::env;
+use std::io::{Cursor};
 use std::fs::File;
 use std::collections::HashMap;
-use std::str::Utf8Error;
 
 use quick_xml::events::{Event, BytesStart, BytesEnd, BytesText};
-use quick_xml::events::attributes::{Attribute};
 use quick_xml::{Reader, Writer};
 
 use zip::ZipWriter;
@@ -93,7 +91,7 @@ struct ExportFile {
     ,partner_track_code: Option<String>
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main2() -> Result<(), Box<dyn std::error::Error>> {
     let mut map = HashMap::new();
 
     map.insert("query", r#"{ 
@@ -146,17 +144,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = Writer::new_with_indent(zip, b' ', 2);
     
     let tag  = b"yml_catalog";
-    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
     
     let tag  = b"shop";
-    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
     println!("{:#?}", export_file);
 
     println!("Start of categories");
 
     let tag  = b"categories";
-    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
     // {{{ categories
     for mid in &mids {
@@ -229,7 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
     // }}}
     
@@ -240,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("---");
 
     let tag  = b"offers";
-    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+    writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
     for mid in &mids {
         
@@ -324,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         in_offer = false;
 
                         offer_writer.write_event(event)?;
-                        writer.write(offer_writer.into_inner().into_inner().as_ref());
+                        writer.write(offer_writer.into_inner().into_inner().as_ref())?;
 
                         offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
                     }
@@ -416,15 +414,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 sid
                                                );
 
-                        offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                        offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
                         offer_writer.write_event(Event::CData(BytesText::from_plain_str(&deep_link)))?;
-                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
                         let tag = b"destination-url-do-not-send-traffic";
 
-                        offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())));
+                        offer_writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
                         offer_writer.write_event(Event::CData(BytesText::from_plain_str(&url_text)))?;
-                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
                         in_url = false;
                     }
@@ -453,9 +451,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
                         pic.push_attribute(("id", img_no.to_string().as_str()));
 
-                        offer_writer.write_event(Event::Start(pic));
+                        offer_writer.write_event(Event::Start(pic))?;
                         offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "big"))))?;
-                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
                         let tag = b"thumbnail";
                         let small_hash = hasher.result_str();
@@ -463,18 +461,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
                         pic.push_attribute(("id", img_no.to_string().as_str()));
 
-                        offer_writer.write_event(Event::Start(pic));
+                        offer_writer.write_event(Event::Start(pic))?;
                         offer_writer.write_event(Event::CData(BytesText::from_plain_str(&format!("https://imgng.gdeslon.ru/mid/{}/imno/{}/cid/{}/hash/{}/{}.jpg", mid, im_no, article_text, small_hash, "small"))))?;
-                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
                         
                         let tag = b"original_picture";
 
                         let mut pic = BytesStart::owned(tag.to_vec(), tag.len());
                         pic.push_attribute(("id", img_no.to_string().as_str()));
 
-                        offer_writer.write_event(Event::Start(pic));
+                        offer_writer.write_event(Event::Start(pic))?;
                         offer_writer.write_event(Event::CData(BytesText::from_plain_str(&picture_text)))?;
-                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+                        offer_writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
                         img_no += 1;
                     }
@@ -507,17 +505,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     }
    
-    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
     // }}}
 
     let tag = b"shop";
-    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
     
     let tag = b"yml_catalog";
-    writer.write_event(Event::End(BytesEnd::borrowed(tag)));
+    writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
     //println!("{}", s(us(writer.into_inner().into_inner().as_ref())));
     
     Ok(())
+}
+
+use actix_web::{web, App, HttpRequest, HttpServer, Responder};
+
+async fn greet(req: HttpRequest) -> impl Responder {
+    let name = req.match_info().get("name").unwrap_or("World");
+    format!("Hello {}!", &name)
+}
+
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/", web::get().to(greet))
+            .route("/{name}", web::get().to(greet))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
 }
