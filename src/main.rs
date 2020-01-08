@@ -1,11 +1,13 @@
-use std::env;
 use std::io::{Cursor};
 use std::fs::File;
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use quick_xml::events::{Event, BytesStart, BytesEnd, BytesText};
 use quick_xml::{Reader, Writer};
 
+use bytes::Bytes;
 use zip::ZipWriter;
 
 extern crate crypto;
@@ -19,6 +21,8 @@ extern crate glob;
 use glob::glob;
 
 use serde::Deserialize;
+
+use futures::{ready, Future};
 
 /// https://url.spec.whatwg.org/#fragment-percent-encode-set
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b'/').add(b'?').add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
@@ -118,8 +122,6 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
         .json(&map)
         .send()?;
 
-    //println!("{}", res.text()?);
-
     let json: GraphqlResponse =  res.json()?;
 
     let export_file = json.data.all_export_files.first().unwrap();
@@ -149,17 +151,11 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
     let tag  = b"shop";
     writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
-    println!("{:#?}", export_file);
-
-    println!("Start of categories");
-
     let tag  = b"categories";
     writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
     // {{{ categories
     for mid in &mids {
-        println!("Start of {}", mid);
-
         let yml_ids: Vec<&str> = match export_file.is_through {
             true => export_file.categories.iter().flat_map(|c| &c.legacy_categories ).filter(|lc| lc.merchant_id.to_string().as_str()  == mid ).map(|lc| lc.yml_id.as_str() ).collect()
             ,false => export_file.legacy_categories.iter().filter(|lc| lc.merchant_id.to_string().as_str() == mid ).map( |lc| lc.yml_id.as_str() ).collect()
@@ -168,11 +164,8 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
         let paths = glob(&format!("/i4/slon-i4-downloader/xmls/{}/*.xml", mid))?;
 
         for path in paths {
-            println!("start of part of {}", mid);
-
             let mut reader = Reader::from_file(path?)?;
             reader.trim_text(true);
-            
             
             let mut buf = Vec::new();
 
@@ -185,17 +178,8 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
                 let event = reader.read_event(&mut buf)?;
 
                 match event {
-
-                    Event::Decl(ref e) =>  {
-                        if e.encoding().is_some() {
-                            let enc = s(us(e.encoding().unwrap()?.as_ref()));
-                            println!("{}", enc);
-                        }
-                    }
-
                     // category
-
-                    ,Event::Start(ref e) if !in_category && e.name() == b"category" => {
+                    Event::Start(ref e) if !in_category && e.name() == b"category" => {
                         for attr in e.attributes() {
                             let a = attr?;
 
@@ -233,17 +217,10 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
     
     // {{{ offers
 
-    println!("---");
-    println!("Start of offers");
-    println!("---");
-
     let tag  = b"offers";
     writer.write_event(Event::Start(BytesStart::owned(tag.to_vec(), tag.len())))?;
 
     for mid in &mids {
-        
-        println!("Start of {}", mid);
-
         let yml_ids: Vec<&str> = match export_file.is_through {
             true => export_file.categories.iter().flat_map(|c| &c.legacy_categories ).filter(|lc| lc.merchant_id.to_string().as_str()  == mid ).map(|lc| lc.yml_id.as_str() ).collect()
             ,false => export_file.legacy_categories.iter().filter(|lc| lc.merchant_id.to_string().as_str() == mid ).map( |lc| lc.yml_id.as_str() ).collect()
@@ -515,25 +492,102 @@ fn main2() -> Result<(), Box<dyn std::error::Error>> {
     let tag = b"yml_catalog";
     writer.write_event(Event::End(BytesEnd::borrowed(tag)))?;
 
-    //println!("{}", s(us(writer.into_inner().into_inner().as_ref())));
-    
     Ok(())
 }
 
-use actix_web::{web, App, HttpRequest, HttpServer, Responder};
+use actix_web::{web, App, HttpServer, HttpResponse, Error};
 
-async fn greet(req: HttpRequest) -> impl Responder {
-    let name = req.match_info().get("name").unwrap_or("World");
-    format!("Hello {}!", &name)
+struct TestBody {
+    data: Writer<Cursor<Vec<u8>>>,
+    delay: actix_rt::time::Delay,
+}
+
+impl TestBody {
+    fn new(data: Writer<Cursor<Vec<u8>>>) -> Self {
+        TestBody {
+            data,
+            delay: actix_rt::time::delay_for(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
+impl futures::Stream for TestBody {
+    type Item = Result<Bytes, Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        ready!(Pin::new(&mut self.delay).poll(cx));
+
+        self.delay = actix_rt::time::delay_for(std::time::Duration::from_millis(10));
+        
+        let c = self.data.clone();
+        self.data = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+        let chunk = Bytes::from(c.into_inner().into_inner());
+
+        if chunk.is_empty() {
+            Poll::Ready(None)
+        } else {
+            Poll::Ready(Some(Ok(chunk)))
+        }
+    }
 }
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
-            .route("/", web::get().to(greet))
-            .route("/{name}", web::get().to(greet))
+            .route("/uploads/exports/{filename}.xml", web::get().to(move || {
+                let mut map = HashMap::new();
+
+                map.insert("query", r#"{ 
+                    allExportFiles(page: 0, perPage: 1) { 
+                        isThrough,
+                        filename, 
+                        minPrice, 
+                        maxPrice,
+                        legacyCategories { categoryId, ymlId, merchantId },
+                        categories { legacyCategories { categoryId, ymlId, merchantId } },
+                        shop { id },
+                        merchants { id },
+                        parkedDomain { name },
+                        user { apiToken },
+                        partnerTrackCode
+                    }
+                }"#);
+
+                let client = reqwest::blocking::Client::new();
+
+                let res = client
+                    .post("https://federation.gdeslon.ru/graphql")
+                    .bearer_auth("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiItMSJ9.naTEm5Y4Y6nGLc4t5EoLuwJPZOoXMRdw_uH0lXwGr2o")
+                    .json(&map)
+                    .send();
+
+                let json: GraphqlResponse =  res.unwrap().json().unwrap();
+
+                let export_file = json.data.all_export_files.first().unwrap();
+
+                let min_price = export_file.min_price;
+                let max_price = export_file.max_price;
+
+                let mids: Vec<String> = match export_file.is_through {
+                    true => export_file.merchants.iter().map ( |m| s(m.id.as_str()) ).collect() 
+                    ,false => vec![export_file.shop.as_ref().unwrap().id.to_string()]
+                };
+
+                let api_token = export_file.user.api_token.get(0..10).unwrap();
+
+                let filename = export_file.filename.as_str();
+                
+                let mut offer_writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+
+                HttpResponse::Ok()
+                    .streaming(TestBody::new(offer_writer))
+            }))
     })
+
     .bind("127.0.0.1:8000")?
     .run()
     .await
