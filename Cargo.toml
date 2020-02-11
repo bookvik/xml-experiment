@@ -5,16 +5,4 @@ authors = ["White-Oak <lpzhelud@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-quick-xml = { version = "*", features = ["encoding"] }
-percent-encoding = "*"
-
-reqwest = { git = "https://github.com/seanmonstar/reqwest", features = ["blocking", "json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-rust-crypto = "^0.2"
-glob = "*"
-zip = "*"
-
-actix-web = "2.0"
-actix-rt = "1.0"
+encoding="*"
