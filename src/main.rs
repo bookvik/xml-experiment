@@ -96,7 +96,6 @@ macro_rules! read_text { // {{{
 } // }}}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let now = Instant::now();
   let mut w = BufWriter::new(io::stdout());
  
   // {{{ lets 
@@ -124,14 +123,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut headers = HeaderMap::new();
   headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
+
   // TO-DO rewrite on federation plz
   let res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
                   .bearer_auth(std::env::var("BEARER_TOKEN")?)
                   .headers(headers)
-                  .body(r#"{"query": "{ allExportFiles(page:0, perPage: 1) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#)
+                  .body(body)
                   .send()?;
 
   // }}}
+
+  let now = Instant::now();
 
   // {{{ categories
 
