@@ -2,9 +2,9 @@ use std::fs::File;
 use std::time::{Instant};
 use std::io::{self, BufReader, BufRead, BufWriter};
 use std::io::prelude::*;
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
-
-macro_rules! read_attr {
+macro_rules! read_attr { // {{{
   ($t:ident, $ts:ident, $p1:ident, $v:ident, $block:block) => {
     let mut buf = Vec::<u8>::new();
     let cut = &$p1[$ts.len()..];
@@ -27,7 +27,7 @@ macro_rules! read_attr {
       }
     }
   }
-}
+} // }}}
 
 macro_rules! rt { // {{{
   ($t:ident, $s:ident, $e:ident, $p1:ident, $buf:ident, $start:block, $inner:block, $end:block) => {
@@ -64,8 +64,8 @@ macro_rules! make_lets { // {{{
 } // }}}
 
 macro_rules! read_xml { // {{{
-  ($buf:ident, $p1:ident, $block:block) => {
-    let mut f = BufReader::new(File::open("src/0.xml").expect("file not opened"));
+  ($source:ident, $buf:ident, $p1:ident, $block:block) => {
+    let mut f = BufReader::new($source);
     let mut $buf = Vec::<u8>::new();
 
     while f.read_until(b'>', &mut $buf).expect("read_until failed") != 0 {
@@ -83,45 +83,115 @@ macro_rules! w { // {{{
   }
 } // }}}
 
-fn main() -> std::io::Result<()> {
+macro_rules! ps { // {{{
+  ($x:ident) => {
+    println!("{:#?}", String::from_utf8($x.to_vec()));
+  }
+} // }}}
+
+macro_rules! read_text { // {{{
+  ($t:ident, $es:ident, $buf:ident) => {
+    let $t = &$buf[0..$buf.len() - $es.len()]; 
+  }
+} // }}}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
   let now = Instant::now();
   let mut w = BufWriter::new(io::stdout());
-
-  // {{{ export file settings
-  let mut _cids = Vec::new();
-  _cids.push(b"43");
-  // }}}
  
-  // {{{ lets
+  // {{{ lets 
+  make_lets!(allExportFiles, als, ale);
+  make_lets!(filename, fs, fe);
+
   make_lets!(categories, cas, cae);
   make_lets!(ws, category, cs, ce);
-  make_lets!(ws, offers, ofs, ofe);
-  make_lets!(offer, os, oe);
+  make_lets!(offers, ofs, ofe);
+  make_lets!(ws, offer, os, oe);
   make_lets!(url, us, ue);
   make_lets!(picture, ps, pe);
   make_lets!(categoryId, cis, cie);
   make_lets!(price, pss, pse);
 
   let mut id = false;
-  let mut parentId = false;
+  let mut pic_num = 1;
 
-  let pic_num = 1;
+  // }}}
+  
+  // {{{ export file settings
+
+  let client = reqwest::blocking::Client::new();
+
+  let mut headers = HeaderMap::new();
+  headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+  // TO-DO rewrite on federation plz
+  let res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
+                  .bearer_auth(std::env::var("BEARER_TOKEN")?)
+                  .headers(headers)
+                  .body(r#"{"query": "{ allExportFiles(page:0, perPage: 1) { filename }}"}"#)
+                  .send()?;
+
   // }}}
 
   // {{{ categories
-  read_xml!(buf, p1, {
+
+  let f = File::open("src/0.xml").expect("file not opened");
+
+  read_xml!(f, buf, p1, {
 
     rt!(categories, cas, cae, p1, buf, {}, {
 
       rt!(category, cs, ce, p1, buf, {
 
         read_attr!(id, cs, p1, v, {
-          if _cids.iter().any(|x| x == &v) {
-            println!("{:#?}", v);
-          }
+          //category = _cids.iter().any(|x| x == &v);
         });
 
       }, {}, {});
+
+    }, { break; });
+
+  }); // }}}
+
+  // {{{ offers
+
+  let f = File::open("src/0.xml").expect("file not opened");
+
+  read_xml!(f, buf, p1, { 
+
+    rt!(offers, ofs, ofe, p1, buf, {}, {
+      
+      rt!(offer, os, oe, p1, buf, {}, {
+
+        rt!(url, us, ue, p1, buf, {}, {}, {
+          read_text!(text, ue, buf);
+          ps!(text);
+        });
+      
+        rt!(categoryId, cis, cie, p1, buf, {}, {}, {
+          read_text!(text, cie, buf);
+          //offer = _cids.iter().any(|x| x == &text);
+        });
+
+        rt!(price, pss, pse, p1, buf, {}, {}, {
+          read_text!(text, pse, buf);
+
+          //if min_price.is_some() {
+          //  let i = text.split(|x| x == &'.');
+          //  offer = text >= min_price.unwrap();
+          //} 
+
+          //if max_price.is_some() {
+          //  offer = text <= max_price.unwrap();
+          //}
+        });
+        
+        rt!(picture, ps, pe, p1, buf, {}, {}, {
+          read_text!(text, pe, buf);
+          ps!(text);
+        });
+
+      }, { break; });
 
     }, { break; });
 

@@ -5,4 +5,4 @@ authors = ["White-Oak <lpzhelud@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-encoding="*"
+reqwest = { git = "https://github.com/seanmonstar/reqwest", features = ["blocking"] }
