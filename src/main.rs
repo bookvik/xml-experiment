@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut headers = HeaderMap::new();
   headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(2).unwrap().as_str(), r#"\" }) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
+  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
 
   // TO-DO rewrite on federation plz
   let res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
@@ -200,7 +200,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
  
   println!("t: {}", now.elapsed().as_millis());
   println!("t: {}", now.elapsed().as_nanos());
-
 
   Ok(())
 }
