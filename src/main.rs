@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
                   .bearer_auth(std::env::var("BEARER_TOKEN")?)
                   .headers(headers)
-                  .body(r#"{"query": "{ allExportFiles(page:0, perPage: 1) { filename }}"}"#)
+                  .body(r#"{"query": "{ allExportFiles(page:0, perPage: 1) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#)
                   .send()?;
 
   // }}}
@@ -165,7 +165,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         rt!(url, us, ue, p1, buf, {}, {}, {
           read_text!(text, ue, buf);
-          ps!(text);
         });
       
         rt!(categoryId, cis, cie, p1, buf, {}, {}, {
@@ -188,7 +187,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         rt!(picture, ps, pe, p1, buf, {}, {}, {
           read_text!(text, pe, buf);
-          ps!(text);
         });
 
       }, { break; });
