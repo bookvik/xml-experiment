@@ -95,12 +95,29 @@ macro_rules! read_text { // {{{
   }
 } // }}}
 
+macro_rules! gql {
+  ($res:ident, $body:expr, $block:block) => {
+    let client = reqwest::blocking::Client::new();
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    // TO-DO rewrite on federation plz
+    let $res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
+                    .bearer_auth(std::env::var("BEARER_TOKEN").expect("BEARER_TOKEN"))
+                    .headers(headers)
+                    .body($body)
+                    .send()?;
+  }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut w = BufWriter::new(io::stdout());
  
   // {{{ lets 
-  make_lets!(allExportFiles, als, ale);
-  make_lets!(filename, fs, fe);
+  make_lets!(ws, allExportFile, als, ale);
+  make_lets!(ws, filename, fs, fe);
+  make_lets!(ws, isThrough, its, ite);
 
   make_lets!(categories, cas, cae);
   make_lets!(ws, category, cs, ce);
@@ -118,19 +135,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   
   // {{{ export file settings
 
-  let client = reqwest::blocking::Client::new();
-
-  let mut headers = HeaderMap::new();
-  headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
   let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
 
-  // TO-DO rewrite on federation plz
-  let res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
-                  .bearer_auth(std::env::var("BEARER_TOKEN")?)
-                  .headers(headers)
-                  .body(body)
-                  .send()?;
+  gql!(res, body, {
+    read_xml!(res, buf, p1, {
+      rt!(isThrough, its, ite, p1, buf, {}, {}, {
+          ps!(buf);
+      });
+    });
+  });
 
   // }}}
 
@@ -167,16 +180,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       rt!(offer, os, oe, p1, buf, {}, {
 
         rt!(url, us, ue, p1, buf, {}, {}, {
-          read_text!(text, ue, buf);
+          //read_text!(text, ue, buf);
         });
       
         rt!(categoryId, cis, cie, p1, buf, {}, {}, {
-          read_text!(text, cie, buf);
+          //read_text!(text, cie, buf);
           //offer = _cids.iter().any(|x| x == &text);
         });
 
         rt!(price, pss, pse, p1, buf, {}, {}, {
-          read_text!(text, pse, buf);
+          //read_text!(text, pse, buf);
 
           //if min_price.is_some() {
           //  let i = text.split(|x| x == &'.');
@@ -189,10 +202,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         
         rt!(picture, ps, pe, p1, buf, {}, {}, {
-          read_text!(text, pe, buf);
+          //read_text!(text, pe, buf);
         });
 
-      }, { break; });
+      }, { });
 
     }, { break; });
 
