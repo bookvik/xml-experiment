@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 reqwest = { git = "https://github.com/seanmonstar/reqwest", features = ["blocking"] }
+encoding = "*"

@@ -2,6 +2,7 @@ use std::fs::File;
 use std::time::{Instant};
 use std::io::{self, BufReader, BufRead, BufWriter};
 use std::io::prelude::*;
+use std::collections::{HashSet};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
 macro_rules! read_attr { // {{{
@@ -39,8 +40,8 @@ macro_rules! rt { // {{{
       }
 
       if $t && $buf.ends_with($e.as_bytes()) {
-        $end;
         $t = false;
+        $end;
 
       } else if $t {
         $inner;
@@ -95,7 +96,7 @@ macro_rules! read_text { // {{{
   }
 } // }}}
 
-macro_rules! gql {
+macro_rules! gql { // {{{
   ($res:ident, $body:expr, $block:block) => {
     let client = reqwest::blocking::Client::new();
 
@@ -108,11 +109,14 @@ macro_rules! gql {
                     .headers(headers)
                     .body($body)
                     .send()?;
+
+    $block;
   }
-}
+} // }}}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut w = BufWriter::new(io::stdout());
+  let mut tmpw = Vec::<u8>::new();
  
   // {{{ lets 
   make_lets!(ws, allExportFile, als, ale);
@@ -127,6 +131,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   make_lets!(picture, ps, pe);
   make_lets!(categoryId, cis, cie);
   make_lets!(price, pss, pse);
+  make_lets!(id, ids, ide);
+  make_lets!(ymlId, ys, ye);
 
   let mut id = false;
   let mut pic_num = 1;
@@ -135,13 +141,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   
   // {{{ export file settings
 
-  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
+  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, merchants { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
+
+  let mut mids = HashSet::<Vec<u8>>::new();
+  let mut ymls = HashSet::<Vec<u8>>::new();
 
   gql!(res, body, {
     read_xml!(res, buf, p1, {
-      rt!(isThrough, its, ite, p1, buf, {}, {}, {
-          ps!(buf);
+
+      rt!(id, ids, ide, p1, buf, {}, {}, {
+        read_text!(_id, ide, buf);
+        mids.insert(_id.to_vec());
       });
+
+      rt!(ymlId, ys, ye, p1, buf, {}, {}, {
+        read_text!(_ymlId, ye, buf);
+        ymls.insert(_ymlId.to_vec());
+      });
+
     });
   });
 
