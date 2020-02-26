@@ -166,6 +166,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   let now = Instant::now();
 
+  for mid in mids { 
+  }
+
   // {{{ categories
 
   let f = File::open("src/0.xml").expect("file not opened");
@@ -177,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       rt!(category, cs, ce, p1, buf, {
 
         read_attr!(id, cs, p1, v, {
-          //category = _cids.iter().any(|x| x == &v);
+          category = ymls.iter().any(|x| x == &v);
         });
 
       }, {}, {});
