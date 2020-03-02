@@ -104,7 +104,7 @@ macro_rules! gql { // {{{
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     // TO-DO rewrite on federation plz
-    let $res = client.post("https://www.gdeslon.ru/adminka/graphql.xml")
+    let $res = client.post("http://app12.gdeslon.ru:11003/adminka/graphql.xml")
                     .bearer_auth(std::env::var("BEARER_TOKEN").expect("BEARER_TOKEN"))
                     .headers(headers)
                     .body($body)
@@ -141,26 +141,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   
   // {{{ export file settings
 
-  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id }, merchants { id }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
+  let body = [r#"{"query": "{ allExportFiles(page:0, perPage: 1, filter: { filename: \""#, std::env::args().nth(1).unwrap().as_str(), r#"\" }) { filename, shop { id, importJobs { url, importFileNo } }, merchants { id, importJobs { url, importFileNo } }, isThrough, categories { legacyCategories { ymlId }}, legacyCategories { ymlId }, parkedDomain { name }, partnerTrackCode }}"}"#].concat();
 
   let mut mids = HashSet::<Vec<u8>>::new();
   let mut ymls = HashSet::<Vec<u8>>::new();
 
   gql!(res, body, {
-    read_xml!(res, buf, p1, {
+    println!("{}", res.text()?);
 
-      rt!(id, ids, ide, p1, buf, {}, {}, {
-        read_text!(_id, ide, buf);
-        mids.insert(_id.to_vec());
-      });
+    //read_xml!(res, buf, p1, {
 
-      rt!(ymlId, ys, ye, p1, buf, {}, {}, {
-        read_text!(_ymlId, ye, buf);
-        ymls.insert(_ymlId.to_vec());
-      });
+    //  rt!(id, ids, ide, p1, buf, {}, {}, {
+    //    read_text!(_id, ide, buf);
+    //    mids.insert(_id.to_vec());
+    //  });
 
-    });
+    //  rt!(ymlId, ys, ye, p1, buf, {}, {}, {
+    //    read_text!(_ymlId, ye, buf);
+    //    ymls.insert(_ymlId.to_vec());
+    //  });
+
+    //});
   });
+  
+  return Ok(());
+
 
   // }}}
 
